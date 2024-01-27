@@ -142,7 +142,7 @@ def receive_message(conn):
         print(f"Error receiving message: {e}")
         return None
 
-def handle_player_connection(conn, player_hands, player_id, game_manager, token_manager):
+def handle_player_connection(conn, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
         if game_manager.current_player == player_id:
             # 发送手牌信息给当前玩家
@@ -152,12 +152,12 @@ def handle_player_connection(conn, player_hands, player_id, game_manager, token_
             action = receive_message(conn)
             if action['action'] == 'play_card':
                 card_index = action['card_index']
-                chosen_card = player_hands[card_index]
-                play_successful = game_manager.play_card(chosen_card, player_hands, token_manager)
+                chosen_card = game_manager.player_hands[f'Player {player_id+1}'][card_index]
+                play_successful = game_manager.play_card(chosen_card, game_manager.player_hands[f'Player {player_id+1}'], token_manager)
                 
                 # 发一张新牌给玩家
-                new_card = game_manager.deal_card(player_hands[f'Player {player_id+1}'])
-                send_message(conn, {'play_successful': play_successful, 'new_hand': player_hands})
+                new_card = game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
+                send_message(conn, {'play_successful': play_successful, 'new_hand': game_manager.player_hands[f'Player {player_id+1}']})
 
             # 更新当前玩家
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
@@ -166,12 +166,13 @@ def handle_player_connection(conn, player_hands, player_id, game_manager, token_
     send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win()})
 
 
+
 def main():
     host = 'localhost'  # Adjust as needed
     port = 12345        # Adjust as needed
 
     # 初始化游戏管理器等
-    num_players = 2  # 假设有两名玩家
+    num_players = 1  # 假设有两名玩家
     game_manager = GameManager(num_players)
     token_manager = TokenManager(num_players)
 
@@ -181,16 +182,19 @@ def main():
         s.listen()
         print("Waiting for player connection...")
         connections = []
+        threads = []
 
         # 等待两个玩家连接
-        for player_id in range(2):
+        for player_id in range(num_players):
             conn, _ = s.accept()
             connections.append(conn)
-            threading.Thread(target=handle_player_connection, args=(conn, game_manager.player_hands, player_id, game_manager, token_manager)).start()
+            thread = threading.Thread(target=handle_player_connection, args=(conn, player_id, game_manager, token_manager))
+            threads.append(thread)
+            thread.start()
 
         # 等待所有线程结束
-        for conn in connections:
-            conn.join()
+        for thread in threads:
+            thread.join()
 
 if __name__ == "__main__":
     main()
