@@ -40,8 +40,10 @@ class GameManager:
         self.played_cards = {color: [] for color in ['Red', 'Blue', 'Green', 'Yellow', 'Purple'][:num_players]}
         self.discarded_cards = []
         self.player_hands = {f'Player {i+1}': [] for i in range(num_players)}
+        self.initialise_deck(num_players, self.deck)
+        self.distribute_cards(self.deck, self.player_hands)
 
-    def initialise_deck(num_players, deck):
+    def initialise_deck(self, num_players, deck):
         # Define card colors
         colors = ['Red', 'Blue', 'Green', 'Yellow', 'Purple'][:num_players]
 
@@ -57,7 +59,7 @@ class GameManager:
         return deck
 
     # Distribute 5 cards to each player
-    def distribute_cards(deck, player_hands):
+    def distribute_cards(self, deck, player_hands):
         for _ in range(5):
             for player in player_hands:
                 card = deck.pop()  # Delete distributed card from deck
@@ -117,40 +119,66 @@ class GameManager:
 # Network communication functions
 def send_message(conn, message):
     try:
-        serialized_message = json.dumps(message).encode('utf-8')
+        print(f"Sending message: {message}")
+        serialized_message = (json.dumps(message) + "\n").encode('utf-8')
         conn.sendall(serialized_message)
+        print("Send message successfully")
     except json.JSONDecodeError as e:
         print(f"Error encoding message: {e}")
 
 def receive_message(conn):
     try:
+        length_bytes = b""
+        while len(length_bytes) < 4:
+            chunk = conn.recv(4 - len(length_bytes))
+            if not chunk:
+                print("客户端关闭连接。")
+                return None
+            length_bytes += chunk
+
+        message_length = int.from_bytes(length_bytes, byteorder='big')
         data = b""
-        while True:
-            chunk = conn.recv(4096)
+
+        while len(data) < message_length:
+            chunk = conn.recv(min(4096, message_length - len(data)))
             if not chunk:
                 break
             data += chunk
-        if data:
+
+        if len(data) == message_length:
+            print(f"接收到完整消息: {data.decode('utf-8')}")
             return json.loads(data.decode('utf-8'))
         else:
-            # Connection closed
+            print(f"接收不完整消息。期望长度: {message_length}，实际长度: {len(data)}")
             return None
     except json.JSONDecodeError as e:
-        print(f"Error decoding message: {e}")
+        print(f"解码消息出错: {e}")
+        return None
+    except socket.timeout:
+        print("超时：在指定时间内未接收到完整数据。")
         return None
     except Exception as e:
-        print(f"Error receiving message: {e}")
+        print(f"接收消息时出错: {e}")
         return None
+
 
 def handle_player_connection(conn, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
         if game_manager.current_player == player_id:
             # 发送手牌信息给当前玩家
-            send_message(conn, game_manager.player_hands[f'Player {player_id+1}'])
+            print(f"Sending hand to Player {player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+
+            #send_message(conn, game_manager.player_hands[f'Player {player_id+1}'])
+            print(f"Waiting for action from Player {player_id+1}...")
+
+            # 向客户端发送指示需要出牌的消息
+            send_message(conn, {'action_required': 'play_card'})
 
             # 接收玩家动作
             action = receive_message(conn)
-            if action['action'] == 'play_card':
+            print(f"Received action from Player {player_id+1}: {action}")
+
+            if action and action['action'] == 'play_card':
                 card_index = action['card_index']
                 chosen_card = game_manager.player_hands[f'Player {player_id+1}'][card_index]
                 play_successful = game_manager.play_card(chosen_card, game_manager.player_hands[f'Player {player_id+1}'], token_manager)
@@ -161,15 +189,15 @@ def handle_player_connection(conn, player_id, game_manager, token_manager):
 
             # 更新当前玩家
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
-
+            print(f"Current player: Player {game_manager.current_player+1}")
     # 游戏结束，发送结果给所有玩家
     send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win()})
 
 
 
 def main():
-    host = 'localhost'  # Adjust as needed
-    port = 12345        # Adjust as needed
+    host = 'localhost'
+    port = 8888
 
     # 初始化游戏管理器等
     num_players = 1  # 假设有两名玩家
