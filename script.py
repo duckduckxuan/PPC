@@ -1,83 +1,45 @@
-import random
+import os
+import socket
 import multiprocessing
 
-# Constants
-NUM_COLORS = 2  # Red and Blue for 2 players
-DECK = {'Red': [1, 1, 1, 2, 2, 3, 3, 4, 4, 5], 'Blue': [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]}
-INFO_TOKENS = 5  # Number of players + 3
-FUSE_TOKENS = 3
+def server():
+    host = "localhost"
+    port = 8888
 
-def game_process(queue):
-    # Initialize game state
-    deck = {color: cards.copy() for color, cards in DECK.items()}
-    random.shuffle(deck['Red'])
-    random.shuffle(deck['Blue'])
-    hands = [[], []]  # Two players
-    played_cards = {'Red': [], 'Blue': []}
-    info_tokens = INFO_TOKENS
-    fuse_tokens = FUSE_TOKENS
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.bind((host, port))
+        server_socket.listen()
 
-    # Deal cards
-    for _ in range(5):
-        for hand in hands:
-            hand.append(deck['Red'].pop() if len(deck['Red']) > len(deck['Blue']) else deck['Blue'].pop())
+        print("Server waiting for connection...")
+        conn, addr = server_socket.accept()
+        with conn:
+            print(f"Connected by: {addr}")
 
-    # Game loop
-    current_player = 0
-    while True:
-        # Send game state to players
-        queue.put(('state', (played_cards, hands[1 - current_player], info_tokens, fuse_tokens)))
+            # Server receives data
+            data = conn.recv(1024)
+            print(f"Received data: {data.decode('utf-8')}")
 
-        # Wait for player action
-        action, data = queue.get()
-        if action == 'play':
-            # Handle play card action
-            pass  # Implement play card logic
-        elif action == 'info':
-            # Handle give information action
-            pass  # Implement give information logic
+def client():
+    host = "localhost"
+    port = 8888
 
-        # Check for game end
-        pass  # Implement game end check
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+        client_socket.connect((host, port))
 
-        # Switch to next player
-        current_player = 1 - current_player
-
-def player_process(player_id, queue):
-    while True:
-        # Receive game state
-        msg, state = queue.get()
-        if msg == 'state':
-            played_cards, other_hand, info_tokens, fuse_tokens = state
-            print(f"Player {player_id} sees:", other_hand, info_tokens, fuse_tokens)
-
-            # Decide on action
-            action = input("Choose action (play/info): ")
-            data = None
-            if action == 'play':
-                data = int(input("Enter card index to play: "))
-            elif action == 'info':
-                data = input("Enter information to give: ")
-
-            # Send action to game process
-            queue.put((action, data))
+        # Client sends data
+        message = "Hello from client"
+        client_socket.sendall(message.encode('utf-8'))
 
 if __name__ == "__main__":
-    queue = multiprocessing.Queue()
+    # Create a Pipe to communicate between processes
+    parent_conn, child_conn = multiprocessing.Pipe()
 
-    # Start game process
-    game_proc = multiprocessing.Process(target=game_process, args=(queue,))
-    game_proc.start()
+    # Create a child process (client)
+    p = multiprocessing.Process(target=client)
+    p.start()
 
-    # Start player processes
-    players = []
-    for i in range(2):
-        player_proc = multiprocessing.Process(target=player_process, args=(i, queue,))
-        player_proc.start()
-        players.append(player_proc)
+    # Parent process (server)
+    server()
 
-    # Wait for all processes to finish
-    game_proc.join()
-    for p in players:
-        p.join()
- 
+    # Wait for the child process to finish
+    p.join()

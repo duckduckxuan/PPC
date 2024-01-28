@@ -126,72 +126,66 @@ def send_message(conn, message):
     except json.JSONDecodeError as e:
         print(f"Error encoding message: {e}")
 
-def receive_message(conn):
-    try:
-        length_bytes = b""
-        while len(length_bytes) < 4:
-            chunk = conn.recv(4 - len(length_bytes))
-            if not chunk:
-                print("客户端关闭连接。")
-                return None
-            length_bytes += chunk
-
-        message_length = int.from_bytes(length_bytes, byteorder='big')
-        data = b""
-
-        while len(data) < message_length:
-            chunk = conn.recv(min(4096, message_length - len(data)))
-            if not chunk:
-                break
-            data += chunk
-
-        if len(data) == message_length:
-            print(f"接收到完整消息: {data.decode('utf-8')}")
-            return json.loads(data.decode('utf-8'))
-        else:
-            print(f"接收不完整消息。期望长度: {message_length}，实际长度: {len(data)}")
-            return None
-    except json.JSONDecodeError as e:
-        print(f"解码消息出错: {e}")
-        return None
-    except socket.timeout:
-        print("超时：在指定时间内未接收到完整数据。")
-        return None
-    except Exception as e:
-        print(f"接收消息时出错: {e}")
-        return None
-
 
 def handle_player_connection(conn, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
         if game_manager.current_player == player_id:
-            # 发送手牌信息给当前玩家
-            print(f"Sending hand to Player {player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+            # 发送手牌信息给另一玩家
+            next_player_id = (player_id + 1) % game_manager.num_players
+            print(f"Player1: {game_manager.player_hands[f'Player 1']}")
+            print(f"Player2: {game_manager.player_hands[f'Player 2']}")
+            print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+            send_message(conn, {'action': 'give_info', 'hand': game_manager.player_hands[f'Player {player_id+1}'], 'recipient': next_player_id})
+            print(f"Waiting for action from Player {next_player_id+1}...")
 
-            #send_message(conn, game_manager.player_hands[f'Player {player_id+1}'])
-            print(f"Waiting for action from Player {player_id+1}...")
+            response = conn.recv(4096).decode('utf-8')
+            print(f"Received action from Player {next_player_id+1}: {response}")
+
+            try:
+                parsed_response = json.loads(response)
+
+                if parsed_response and parsed_response['action'] == 'give_info':
+                    consume = parsed_response['consume']
+                    if consume and token_manager.info_tokens > 0:
+                        info_statu = token_manager.use_info_token
+                        print(f"Info token available status: {info_statu}")
+                    else:
+                        print(f"There's no info to Player {player_id+1}")
+
+            except json.JSONDecodeError as e:
+                print(f"Error decoding action: {e}")
+                send_message(conn, {'error': f"Invalid action format: {action_str}", 'recipient': next_player_id})
+
 
             # 向客户端发送指示需要出牌的消息
-            send_message(conn, {'action_required': 'play_card'})
+            send_message(conn, {'action_required': 'play_card', 'recipient': player_id})
 
             # 接收玩家动作
-            action = receive_message(conn)
-            print(f"Received action from Player {player_id+1}: {action}")
+            action_str = conn.recv(4096).decode('utf-8')
+            print(f"Received action from Player {player_id+1}: {action_str}")
 
-            if action and action['action'] == 'play_card':
-                card_index = action['card_index']
-                chosen_card = game_manager.player_hands[f'Player {player_id+1}'][card_index]
-                play_successful = game_manager.play_card(chosen_card, game_manager.player_hands[f'Player {player_id+1}'], token_manager)
-                
-                # 发一张新牌给玩家
-                new_card = game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
-                send_message(conn, {'play_successful': play_successful, 'new_hand': game_manager.player_hands[f'Player {player_id+1}']})
+            try:
+                action = json.loads(action_str)
+                if action and action['action'] == 'play_card':
+                    card_index = action['card_index']
+                    chosen_card = game_manager.player_hands[f'Player {player_id+1}'][card_index]
+                    play_successful = game_manager.play_card(chosen_card, game_manager.player_hands[f'Player {player_id+1}'], token_manager)
+                    
+                    # 发一张新牌给玩家
+                    game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
+                    played_pile = game_manager.played_cards
+                    send_message(conn, {'played_pile': played_pile, 'play_successful': play_successful, 'recipient': player_id})
+                    send_message(conn, {'played_pile': played_pile, 'play_successful': play_successful, 'recipient': next_player_id})
 
+            except json.JSONDecodeError as e:
+                print(f"Error decoding action: {e}")
+                send_message(conn, {'error': f"Invalid action format: {action_str}", 'recipient': player_id})
             # 更新当前玩家
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
             print(f"Current player: Player {game_manager.current_player+1}")
     # 游戏结束，发送结果给所有玩家
-    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win()})
+    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win(), 'recipient': player_id})
+    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win(), 'recipient': next_player_id})
 
 
 
@@ -200,7 +194,7 @@ def main():
     port = 8888
 
     # 初始化游戏管理器等
-    num_players = 1  # 假设有两名玩家
+    num_players = 2  # 假设有两名玩家
     game_manager = GameManager(num_players)
     token_manager = TokenManager(num_players)
 
