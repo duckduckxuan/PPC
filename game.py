@@ -2,7 +2,7 @@ import random
 import socket
 import json
 from multiprocessing import Process, Manager
-import time
+
 
 # Manage status of info tokens and fuse tokens
 class TokenManager:
@@ -135,7 +135,6 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
             send_message(conn1, {'action_required': 'play_card'})
 
             # 接收玩家动作
-            time.sleep(10)
             action_str = conn1.recv(4096).decode('utf-8')
             print(f"Received action from Player {player_id+1}: {action_str}")
 
@@ -170,7 +169,6 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
             #print(f"Player2: {game_manager.player_hands[f'Player 2']}")
             print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
             send_message(conn2, {'hand': game_manager.player_hands[f'Player {player_id+1}']})
-            time.sleep(2)
             send_message(conn2, {'action': 'give_info'}) 
             print(f"Waiting for action give_info from Player {next_player_id+1}...")
 
@@ -210,9 +208,6 @@ def main():
         s.listen()
         print("Waiting for player connection...")
 
-        # 创建 Manager 对象，用于创建共享的 connections 列表
-        #manager = Manager()
-        #connections = manager.list()
         connections = []
         processes = []
         connected_players = 0
