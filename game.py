@@ -1,7 +1,8 @@
 import random
 import socket
 import json
-import threading
+from multiprocessing import Process, Manager
+import time
 
 # Manage status of info tokens and fuse tokens
 class TokenManager:
@@ -127,41 +128,15 @@ def send_message(conn, message):
         print(f"Error encoding message: {e}")
 
 
-def handle_player_connection(conn, player_id, game_manager, token_manager):
+def handle_player_connection(conn1, conn2, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
         if game_manager.current_player == player_id:
-            # 发送手牌信息给另一玩家
-            next_player_id = (player_id + 1) % game_manager.num_players
-            print(f"Player1: {game_manager.player_hands[f'Player 1']}")
-            print(f"Player2: {game_manager.player_hands[f'Player 2']}")
-            print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
-            send_message(conn, {'action': 'give_info', 'hand': game_manager.player_hands[f'Player {player_id+1}'], 'recipient': next_player_id})
-            print(f"Waiting for action from Player {next_player_id+1}...")
-
-            response = conn.recv(4096).decode('utf-8')
-            print(f"Received action from Player {next_player_id+1}: {response}")
-
-            try:
-                parsed_response = json.loads(response)
-
-                if parsed_response and parsed_response['action'] == 'give_info':
-                    consume = parsed_response['consume']
-                    if consume and token_manager.info_tokens > 0:
-                        info_statu = token_manager.use_info_token
-                        print(f"Info token available status: {info_statu}")
-                    else:
-                        print(f"There's no info to Player {player_id+1}")
-
-            except json.JSONDecodeError as e:
-                print(f"Error decoding action: {e}")
-                send_message(conn, {'error': f"Invalid action format: {action_str}", 'recipient': next_player_id})
-
-
             # 向客户端发送指示需要出牌的消息
-            send_message(conn, {'action_required': 'play_card', 'recipient': player_id})
+            send_message(conn1, {'action_required': 'play_card'})
 
             # 接收玩家动作
-            action_str = conn.recv(4096).decode('utf-8')
+            time.sleep(10)
+            action_str = conn1.recv(4096).decode('utf-8')
             print(f"Received action from Player {player_id+1}: {action_str}")
 
             try:
@@ -174,18 +149,51 @@ def handle_player_connection(conn, player_id, game_manager, token_manager):
                     # 发一张新牌给玩家
                     game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
                     played_pile = game_manager.played_cards
-                    send_message(conn, {'played_pile': played_pile, 'play_successful': play_successful, 'recipient': player_id})
-                    send_message(conn, {'played_pile': played_pile, 'play_successful': play_successful, 'recipient': next_player_id})
+                    send_message(conn1, {'played_pile': played_pile, 'play_successful': play_successful})
+                    send_message(conn2, {'played_pile': played_pile, 'play_successful': play_successful})
 
             except json.JSONDecodeError as e:
                 print(f"Error decoding action: {e}")
-                send_message(conn, {'error': f"Invalid action format: {action_str}", 'recipient': player_id})
+                send_message(conn1, {'error': f"Invalid action format: {action_str}"})
+
             # 更新当前玩家
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
             print(f"Current player: Player {game_manager.current_player+1}")
+            conn_temp = conn1
+            conn1 = conn2
+            conn2 = conn_temp
+
+        else:
+            # 发送手牌信息给另一玩家
+            next_player_id = (player_id + 1) % game_manager.num_players
+            #print(f"Player1: {game_manager.player_hands[f'Player 1']}")
+            #print(f"Player2: {game_manager.player_hands[f'Player 2']}")
+            print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+            send_message(conn2, {'hand': game_manager.player_hands[f'Player {player_id+1}']})
+            time.sleep(2)
+            send_message(conn2, {'action': 'give_info'}) 
+            print(f"Waiting for action give_info from Player {next_player_id+1}...")
+
+            response = conn2.recv(4096).decode('utf-8')
+            print(f"Received action give_info from Player {next_player_id+1}: {response}")
+
+            try:
+                parsed_response = json.loads(response)
+                if parsed_response and parsed_response['action'] == 'give_info':
+                    consume = parsed_response['consume']
+                    if consume and token_manager.info_tokens > 0:
+                        info_statu = token_manager.use_info_token
+                        print(f"Info token available status: {info_statu}")
+                    else:
+                        print(f"There's no info to Player {player_id+1}")
+
+            except json.JSONDecodeError as e:
+                print(f"Error decoding action: {e}")
+                send_message(conn2, {'error': f"Invalid action format: {response}"})
+
     # 游戏结束，发送结果给所有玩家
-    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win(), 'recipient': player_id})
-    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win(), 'recipient': next_player_id})
+    send_message(conn1, {'game_over': True, 'game_won': game_manager.is_game_win()})
+    send_message(conn2, {'game_over': True, 'game_won': game_manager.is_game_win()})
 
 
 
@@ -193,30 +201,36 @@ def main():
     host = 'localhost'
     port = 8888
 
-    # 初始化游戏管理器等
-    num_players = 2  # 假设有两名玩家
+    num_players = 2
     game_manager = GameManager(num_players)
     token_manager = TokenManager(num_players)
 
-    # 设置套接字等待玩家连接
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
         print("Waiting for player connection...")
-        connections = []
-        threads = []
 
-        # 等待两个玩家连接
-        for player_id in range(num_players):
+        # 创建 Manager 对象，用于创建共享的 connections 列表
+        #manager = Manager()
+        #connections = manager.list()
+        connections = []
+        processes = []
+        connected_players = 0
+
+        while connected_players < num_players:
             conn, _ = s.accept()
             connections.append(conn)
-            thread = threading.Thread(target=handle_player_connection, args=(conn, player_id, game_manager, token_manager))
-            threads.append(thread)
-            thread.start()
+            connected_players += 1
+            print(f"Player {connected_players} connected.")
 
-        # 等待所有线程结束
-        for thread in threads:
-            thread.join()
+        for player_id in range(num_players):
+            p = Process(target=handle_player_connection, args=(connections[0], connections[1], player_id, game_manager, token_manager))
+            processes.append(p)
+            p.start()
+
+        for p in processes:
+            p.join()
+
 
 if __name__ == "__main__":
     main()

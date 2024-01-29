@@ -1,6 +1,6 @@
 import socket
 import json
-import queue
+from multiprocessing import Queue, Process
 import threading
 
 def send_message(conn, message):
@@ -23,97 +23,100 @@ def choose_card_to_play(num_cards):
         except ValueError:
             print("Invalid input. Please enter a valid number.")
 
-def display_hand(hand):
-    return " ".join(hand)
-
 def handle_server_connection(socket, info_queue):
     while True:
-        response = socket.recv(4096).decode('utf-8')
-        if response is None:
-            print("No response received. Exiting.")
-            break
+        try:
+            response = socket.recv(4096).decode('utf-8')
+            if not response:
+                print("Connection closed by the server. Exiting.")
+                break
 
-        parsed_response = json.loads(response)
-        recipient_id = parsed_response.get('recipient', None)
+            parsed_response = json.loads(response)
+            print(f"Received message:", parsed_response)
 
-        if parsed_response and 'game_over' in parsed_response and recipient_id == 0:
-            print("Received response:", parsed_response)
-            print("Game Over. You", "won!" if parsed_response['game_over'] else "lost.")
-            break
+            recipient_id = parsed_response.get('recipient', None)
 
-        if parsed_response and 'action_required' in parsed_response and recipient_id == 0:
-            print("Received response:", parsed_response)
-            action_required = parsed_response['action_required']
+            if parsed_response and 'game_over' in parsed_response and recipient_id == 0:
+                #print("Received response:", parsed_response)
+                print("Game Over. You", "won!" if parsed_response['game_over'] else "lost.")
+                break
 
-            if action_required == 'give_info':
-                hand = parsed_response.get('hand', [])
-                if not hand:
-                    print("No hand received. Exiting.")
-                    break
-                print("Received hand:", hand)
+            if parsed_response and 'action_required' in parsed_response and recipient_id == 0:
+                #print("Received response:", parsed_response)
+                action_required = parsed_response['action_required']
 
-                # 用户输入
-                user_input = input("Give a tip to the other player? (y/n): ")
+                if action_required == 'give_info':
+                    hand = parsed_response.get('hand', [])
+                    if not hand:
+                        print("No hand received. Exiting.")
+                        break
+                    print("Received hand:", hand)
 
-                if user_input.lower() == 'y':
-                    # 让玩家输入想发送的信息
-                    info_message = input("Enter the information you want to send: ")
+                    # 用户输入
+                    user_input = input("Give a tip to the other player? (y/n): ")
 
-                    # 向队列中添加信息，用于与另一个玩家通信
-                    info_queue.put(info_message)
+                    if user_input.lower() == 'y':
+                        # 让玩家输入想发送的信息
+                        info_message = input("Enter the information you want to send: ")
 
-                    # 向游戏进程告知消耗一个引信令牌
-                    send_message(socket, {'action': 'give_info', 'consume': True})
+                        # 向队列中添加信息，用于与另一个玩家通信
+                        info_queue.put(info_message)
 
-                elif user_input.lower() == 'n':
-                    # 向另一玩家自动发送消息
-                    info_message = "This player will not provide information this round."
+                        # 向游戏进程告知消耗一个引信令牌
+                        send_message(socket, {'action': 'give_info', 'consume': True})
 
-                    # 向队列中添加信息，用于与另一个玩家通信
-                    info_queue.put(info_message)
+                    elif user_input.lower() == 'n':
+                        # 向另一玩家自动发送消息
+                        info_message = "This player will not provide information this round."
 
-                    send_message(socket, {'action': 'give_info', 'consume': False})
+                        # 向队列中添加信息，用于与另一个玩家通信
+                        info_queue.put(info_message)
 
-                else:
-                    print("Invalid input. Please enter 'y' or 'n'.")
+                        send_message(socket, {'action': 'give_info', 'consume': False})
 
-            elif action_required == 'play_card':
-                print("Server is requesting action: play_card")
+                    else:
+                        print("Invalid input. Please enter 'y' or 'n'.")
 
-                # 提示用户选择一张牌
-                card_index = choose_card_to_play(5)
-                print(f"Sending play_card action with card index: {card_index}")
+                elif action_required == 'play_card':
+                    print("Server is requesting action: play_card")
 
-                send_message(socket, {'action': 'play_card', 'card_index': card_index})
+                    # 提示用户选择一张牌
+                    card_index = choose_card_to_play(5)
+                    print(f"Sending play_card action with card index: {card_index}")
 
-                # Receive game update
-                response = socket.recv(4096).decode('utf-8')
-                if response is None:
-                    print("No response received. Exiting.")
-                    break
-                print(f"Received message from server: {response}")
+                    send_message(socket, {'action': 'play_card', 'card_index': card_index})
 
-                print("Received response:", response)
-                parsed_response = json.loads(response)
-                recipient_id = parsed_response.get('recipient', None)
+                    # Receive game update
+                    response = socket.recv(4096).decode('utf-8')
+                    if not response:
+                        print("Connection closed by the server. Exiting.")
+                        break
+                    print(f"Received message from server: {response}")
 
-                if parsed_response and recipient_id == 0:
-                    print("Played card pile:", parsed_response.get('played_pile', []))
-                    print("Play was successful!" if parsed_response['play_successful'] else "Play failed.")
-                    print("\n" + "-"*30)  # Add a separator for better readability
+                    parsed_response = json.loads(response)
+                    recipient_id = parsed_response.get('recipient', None)
+
+                    if parsed_response and recipient_id == 0:
+                        print("Played card pile:", parsed_response.get('played_pile', []))
+                        print("Play was successful!" if parsed_response['play_successful'] else "Play failed.")
+                        print("\n" + "-"*30)  # Add a separator for better readability
+
+        except Exception as e:
+            print(f"Error handling server connection: {e}")
+
 
 def main():
     host = 'localhost'
     port = 8888
-    info_queue = queue.Queue()
+    info_queue = Queue()
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((host, port))
         print("Connection OK")
 
         # 在一个线程中处理与服务器的通信
-        server_thread = threading.Thread(target=handle_server_connection, args=(s, info_queue))
-        server_thread.start()
+        p = Process(target=handle_server_connection, args=(s, info_queue))
+        p.start()
 
         """
         # 在主线程中等待用户输入
@@ -124,7 +127,7 @@ def main():
         """
 
         # 等待服务器线程结束
-        server_thread.join()
+        p.join()
 
 if __name__ == "__main__":
     main()
