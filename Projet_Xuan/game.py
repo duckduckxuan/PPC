@@ -130,7 +130,7 @@ def send_message(conn, message):
 def handle_player_connection(conn, player_id, game_manager, token_manager, shm):
     while not game_manager.is_game_over(token_manager):
         shm.write(f"Rest info token: {token_manager.info_tokens}\nRest fuse token: {token_manager.fuse_tokens}".encode())
-        time.sleep(3)
+        time.sleep(1)
         shm.remove()
 
         if game_manager.current_player == player_id:
