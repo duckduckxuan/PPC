@@ -1,8 +1,8 @@
 import random
 import socket
 import json
-from multiprocessing import Process, Manager
-
+from multiprocessing import Process
+import time
 
 # Manage status of info tokens and fuse tokens
 class TokenManager:
@@ -39,7 +39,6 @@ class GameManager:
         self.num_players = num_players
         self.current_player = 0
         self.played_cards = {color: [] for color in ['Red', 'Blue', 'Green', 'Yellow', 'Purple'][:num_players]}
-        self.discarded_cards = []
         self.player_hands = {f'Player {i+1}': [] for i in range(num_players)}
         self.initialise_deck(num_players, self.deck)
         self.distribute_cards(self.deck, self.player_hands)
@@ -93,7 +92,6 @@ class GameManager:
         # Discard this card and use a fuse token
         else:
             player_handcard.remove(card)
-            self.discarded_cards.append(card)
             token_manager.use_fuse_token()
             return False
 
@@ -121,22 +119,22 @@ class GameManager:
 def send_message(conn, message):
     try:
         print(f"Sending message: {message}")
-        serialized_message = (json.dumps(message) + "\n").encode('utf-8')
+        serialized_message = (json.dumps(message)).encode('utf-8')
         conn.sendall(serialized_message)
         print("Send message successfully")
     except json.JSONDecodeError as e:
         print(f"Error encoding message: {e}")
 
 # Logic of the game
-def handle_player_connection(conn1, conn2, player_id, game_manager, token_manager):
+def handle_player_connection(conn, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
 
         if game_manager.current_player == player_id:
             # Send a message to the player who plays card
-            send_message(conn1, {'action_required': 'play_card'})
+            send_message(conn, {'action_required': 'play_card'})
 
             # Receive player's action
-            action_str = conn1.recv(4096).decode('utf-8')
+            action_str = conn.recv(4096).decode('utf-8')
             print(f"Received action from Player {player_id+1}: {action_str}")
 
             try:
@@ -149,34 +147,29 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
                     # Distribute a new card to player
                     game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
                     played_pile = game_manager.played_cards
-                    send_message(conn1, {'played_pile': played_pile, 'play_successful': play_successful})
-                    send_message(conn2, {'played_pile': played_pile, 'play_successful': play_successful})
+                    send_message(conn, {'played_pile': played_pile, 'play_successful': play_successful})
 
             except json.JSONDecodeError as e:
                 print(f"Error decoding action: {e}")
-                send_message(conn1, {'error': f"Invalid action format: {action_str}"})
+                send_message(conn, {'error': f"Invalid action format: {action_str}"})
 
             # Update players' infomation
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
             print(f"Current player: Player {game_manager.current_player+1}")
-            conn_temp = conn1
-            conn1 = conn2
-            conn2 = conn_temp
-
 
         else:
             # Find the other player's ID
             next_player_id = (player_id + 1) % game_manager.num_players
-            print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+            print(f"Sending hand to Player {player_id+1}: {game_manager.player_hands[f'Player {next_player_id+1}']}")
 
             # Send a message to the player who gives infomation to the other
-            send_message(conn2, {'hand': game_manager.player_hands[f'Player {player_id+1}']})
-            send_message(conn2, {'action': 'give_info'}) 
-            print(f"Waiting for action give_info from Player {next_player_id+1}...")
+            send_message(conn, {'hand': game_manager.player_hands[f'Player {next_player_id+1}'], 'action': 'give_info'})
+            print(f"Waiting for action give_info from Player {player_id+1}...")
 
             # Receive player's action
-            response = conn2.recv(4096).decode('utf-8')
-            print(f"Received action give_info from Player {next_player_id+1}: {response}")
+            response = conn.recv(4096).decode('utf-8')
+            print(f"Received action give_info from Player {player_id+1}: {response}")
+            time.sleep(10)
 
             try:
                 parsed_response = json.loads(response)
@@ -186,16 +179,14 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
                         info_statu = token_manager.use_info_token
                         print(f"Info token available status: {info_statu}")
                     else:
-                        print(f"There's no info to Player {player_id+1}")
+                        print(f"There's no info to Player {next_player_id+1}")
 
             except json.JSONDecodeError as e:
                 print(f"Error decoding action: {e}")
-                send_message(conn2, {'error': f"Invalid action format: {response}"})
+                send_message(conn, {'error': f"Invalid action format: {response}"})
 
     # 游戏结束，发送结果给所有玩家
-    send_message(conn1, {'game_over': True, 'game_won': game_manager.is_game_win()})
-    send_message(conn2, {'game_over': True, 'game_won': game_manager.is_game_win()})
-
+    send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win()})
 
 
 def main():
@@ -222,7 +213,7 @@ def main():
             print(f"Player {connected_players} connected.")
 
         for player_id in range(num_players):
-            p = Process(target=handle_player_connection, args=(connections[0], connections[1], player_id, game_manager, token_manager))
+            p = Process(target=handle_player_connection, args=(connections[player_id], player_id, game_manager, token_manager))
             processes.append(p)
             p.start()
 

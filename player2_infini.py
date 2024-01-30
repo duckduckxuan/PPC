@@ -3,6 +3,7 @@ import json
 from multiprocessing import Process
 import sysv_ipc
 
+
 def send_message(conn, message):
     try:
         print(f"Sending message: {message}")
@@ -29,8 +30,8 @@ def receive_message(socket):
 def choose_card_to_play(num_cards):
     while True:
         try:
-            card_index = 1
-            #card_index = int(input(f"Choose a card to play (1-{num_cards}): ")) - 1
+            #card_index = 1
+            card_index = int(input(f"Choose a card to play (1-{num_cards}): ")) - 1
             if 0 <= card_index < num_cards:
                 return card_index
             else:
@@ -39,7 +40,7 @@ def choose_card_to_play(num_cards):
             print("Invalid input. Please enter a valid number.")
 
 
-def handle_server_socket(socket, message_queue):
+def handle_server_socket(socket):
     try:
         while True:
             parsed_response = receive_message(socket)
@@ -51,25 +52,51 @@ def handle_server_socket(socket, message_queue):
                 break
 
             if 'action_required' in parsed_response:
-                action_required = parsed_response['action_required']
-                print("required")
-                if action_required == 'give_info':
+                initial_command = parsed_response['action_required']
+                print(f"{initial_command}")
+                if initial_command == 'give_info':
                     user_input = input("Give a tip to the other player? (y/n): ")
 
                     if user_input.lower() == 'y':
-                        info_message = input("Enter the information you want to send: ")
-                        message_queue.send(info_message.encode(), type=1)
+                        try:
+                            while True:
+                                key = 128
+                                mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
+                                info_message = input("Enter the information you want to send: ")
+                                mq.send(info_message.encode(), type=1)
+
+                                message, _ = mq.receive(type=2)
+                                if message == "exit":
+                                    break
+                                if message == "again":
+                                    info_message = input("Enter the information you want to send: ")
+                                    mq.send(info_message.encode(), type=1)
+                        finally:
+                            mq.remove()
                         send_message(socket, {'action': 'give_info', 'consume': True})
 
                     elif user_input.lower() == 'n':
-                        info_message = "This player will not provide information this round."
-                        message_queue.send(info_message.encode(), type=1)
                         send_message(socket, {'action': 'give_info', 'consume': False})
 
                     else:
                         print("Invalid input. Please enter 'y' or 'n'.")
 
-                if action_required == 'play_card':
+                if initial_command == 'play_card':
+                    try:
+                        while True:
+                            key = 128
+                            mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
+                            message, _ = mq.receive(type=1)
+                            context = message.decode('utf-8')
+                            print(f"Received message: {context}")
+                            
+                            require = input("Enter 'again' for recommended info, enter 'exit' for end conversation: ")
+                            mq.send(require.encode(), type=2)
+                            if require == "exit":
+                                break
+                    finally:
+                        mq.remove()
+
                     print("Server is requesting action: play_card")
                     card_index = choose_card_to_play(5)
                     print(f"Sending play_card action with card index: {card_index}")
@@ -93,12 +120,9 @@ if __name__ == "__main__":
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.connect(('localhost', 12345))
 
-    # Set up sysv_ipc.message_queue
-    key = 128
-    message_queue = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
 
     # Start processes
-    process_server_socket = Process(target=handle_server_socket, args=(server_socket, message_queue))
+    process_server_socket = Process(target=handle_server_socket, args=(server_socket, ))
 
     process_server_socket.start()
 
