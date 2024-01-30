@@ -117,7 +117,7 @@ class GameManager:
 
 
 
-# Network communication functions
+# Send messages to client
 def send_message(conn, message):
     try:
         print(f"Sending message: {message}")
@@ -127,14 +127,15 @@ def send_message(conn, message):
     except json.JSONDecodeError as e:
         print(f"Error encoding message: {e}")
 
-
+# Logic of the game
 def handle_player_connection(conn1, conn2, player_id, game_manager, token_manager):
     while not game_manager.is_game_over(token_manager):
+
         if game_manager.current_player == player_id:
-            # 向客户端发送指示需要出牌的消息
+            # Send a message to the player who plays card
             send_message(conn1, {'action_required': 'play_card'})
 
-            # 接收玩家动作
+            # Receive player's action
             action_str = conn1.recv(4096).decode('utf-8')
             print(f"Received action from Player {player_id+1}: {action_str}")
 
@@ -145,7 +146,7 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
                     chosen_card = game_manager.player_hands[f'Player {player_id+1}'][card_index]
                     play_successful = game_manager.play_card(chosen_card, game_manager.player_hands[f'Player {player_id+1}'], token_manager)
                     
-                    # 发一张新牌给玩家
+                    # Distribute a new card to player
                     game_manager.deal_card(game_manager.player_hands[f'Player {player_id+1}'])
                     played_pile = game_manager.played_cards
                     send_message(conn1, {'played_pile': played_pile, 'play_successful': play_successful})
@@ -155,23 +156,25 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
                 print(f"Error decoding action: {e}")
                 send_message(conn1, {'error': f"Invalid action format: {action_str}"})
 
-            # 更新当前玩家
+            # Update players' infomation
             game_manager.current_player = (game_manager.current_player + 1) % game_manager.num_players
             print(f"Current player: Player {game_manager.current_player+1}")
             conn_temp = conn1
             conn1 = conn2
             conn2 = conn_temp
 
+
         else:
-            # 发送手牌信息给另一玩家
+            # Find the other player's ID
             next_player_id = (player_id + 1) % game_manager.num_players
-            #print(f"Player1: {game_manager.player_hands[f'Player 1']}")
-            #print(f"Player2: {game_manager.player_hands[f'Player 2']}")
             print(f"Sending hand to Player {next_player_id+1}: {game_manager.player_hands[f'Player {player_id+1}']}")
+
+            # Send a message to the player who gives infomation to the other
             send_message(conn2, {'hand': game_manager.player_hands[f'Player {player_id+1}']})
             send_message(conn2, {'action': 'give_info'}) 
             print(f"Waiting for action give_info from Player {next_player_id+1}...")
 
+            # Receive player's action
             response = conn2.recv(4096).decode('utf-8')
             print(f"Received action give_info from Player {next_player_id+1}: {response}")
 
@@ -197,7 +200,7 @@ def handle_player_connection(conn1, conn2, player_id, game_manager, token_manage
 
 def main():
     host = 'localhost'
-    port = 8888
+    port = 12345
 
     num_players = 2
     game_manager = GameManager(num_players)

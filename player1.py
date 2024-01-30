@@ -11,6 +11,21 @@ def send_message(conn, message):
     except json.JSONDecodeError as e:
         print(f"Error encoding message: {e}")
 
+def receive_message(socket):
+    try:
+        response = socket.recv(4096).decode('utf-8')
+        print(f"Received message: {response}")
+        if not response:
+            print("Connection closed by the server. Exiting.")
+            return None
+        return json.loads(response)
+    except json.JSONDecodeError as json_error:
+        print(f"Error decoding server response: {json_error}")
+        return None
+    except Exception as e:
+        print(f"Error receive message from server: {e}")
+        return None
+
 def choose_card_to_play(num_cards):
     while True:
         try:
@@ -27,13 +42,9 @@ def choose_card_to_play(num_cards):
 def handle_server_socket(socket, message_queue):
     try:
         while True:
-            response = socket.recv(4096).decode('utf-8')
-            if not response:
-                print("Connection closed by the server. Exiting.")
+            parsed_response = receive_message(socket)
+            if parsed_response is None:
                 break
-
-            parsed_response = json.loads(response)
-            print(f"Received message:", parsed_response)
 
             if 'game_over' in parsed_response:
                 print("Game Over. You", "won!" if parsed_response['game_over'] else "lost.")
@@ -65,14 +76,7 @@ def handle_server_socket(socket, message_queue):
                     send_message(socket, {'action': 'play_card', 'card_index': card_index})
 
                     # Receive game update
-                    response = socket.recv(4096).decode('utf-8')
-                    if not response:
-                        print("Connection closed by the server. Exiting.")
-                        break
-                    print(f"Received message from server: {response}")
-
-                    parsed_response = json.loads(response)
-
+                    parsed_response = receive_message(socket)
                     if parsed_response:
                         print("Played card pile:", parsed_response.get('played_pile', []))
                         print("Play was successful!" if parsed_response['play_successful'] else "Play failed.")
@@ -81,20 +85,13 @@ def handle_server_socket(socket, message_queue):
     except Exception as e:
         print(f"Error handling server socket connection: {e}")
 
-def handle_player_queue(message_queue):
-    try:
-        while True:
-            # Handle sysv_ipc.queue communication with the other player here
-            pass
-    except Exception as e:
-        print(f"Error handling player queue communication: {e}")
 
 if __name__ == "__main__":
     # Assuming you have the required imports and functions defined
 
     # Set up socket connection
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.connect(('localhost', 8888))
+    server_socket.connect(('localhost', 12345))
 
     # Set up sysv_ipc.message_queue
     key = 128
@@ -102,10 +99,7 @@ if __name__ == "__main__":
 
     # Start processes
     process_server_socket = Process(target=handle_server_socket, args=(server_socket, message_queue))
-    process_player_queue = Process(target=handle_player_queue, args=(message_queue,))
 
     process_server_socket.start()
-    process_player_queue.start()
 
     process_server_socket.join()
-    process_player_queue.join()
