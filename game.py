@@ -3,6 +3,7 @@ import socket
 import json
 from multiprocessing import Process
 import time
+import sysv_ipc
 
 # Manage status of info tokens and fuse tokens
 class TokenManager:
@@ -126,8 +127,11 @@ def send_message(conn, message):
         print(f"Error encoding message: {e}")
 
 # Logic of the game
-def handle_player_connection(conn, player_id, game_manager, token_manager):
+def handle_player_connection(conn, player_id, game_manager, token_manager, shm):
     while not game_manager.is_game_over(token_manager):
+        shm.write(f"Rest info token: {token_manager.info_tokens}\nRest fuse token: {token_manager.fuse_tokens}".encode())
+        time.sleep(3)
+        shm.remove()
 
         if game_manager.current_player == player_id:
             # Send a message to the player who plays card
@@ -169,7 +173,7 @@ def handle_player_connection(conn, player_id, game_manager, token_manager):
             # Receive player's action
             response = conn.recv(4096).decode('utf-8')
             print(f"Received action give_info from Player {player_id+1}: {response}")
-            time.sleep(10)
+
 
             try:
                 parsed_response = json.loads(response)
@@ -185,7 +189,7 @@ def handle_player_connection(conn, player_id, game_manager, token_manager):
                 print(f"Error decoding action: {e}")
                 send_message(conn, {'error': f"Invalid action format: {response}"})
 
-    # 游戏结束，发送结果给所有玩家
+    # Game over, send result to player
     send_message(conn, {'game_over': True, 'game_won': game_manager.is_game_win()})
 
 
@@ -196,6 +200,8 @@ def main():
     num_players = 2
     game_manager = GameManager(num_players)
     token_manager = TokenManager(num_players)
+
+    shm = sysv_ipc.SharedMemory(888, sysv_ipc.IPC_CREAT, size=1024)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
@@ -213,7 +219,7 @@ def main():
             print(f"Player {connected_players} connected.")
 
         for player_id in range(num_players):
-            p = Process(target=handle_player_connection, args=(connections[player_id], player_id, game_manager, token_manager))
+            p = Process(target=handle_player_connection, args=(connections[player_id], player_id, game_manager, token_manager, shm))
             processes.append(p)
             p.start()
 

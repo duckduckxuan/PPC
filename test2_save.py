@@ -1,8 +1,7 @@
+import threading
+import sysv_ipc
 import socket
 import json
-from multiprocessing import Process
-import sysv_ipc
-
 
 def send_message(conn, message):
     try:
@@ -27,10 +26,10 @@ def receive_message(socket):
         print(f"Error receive message from server: {e}")
         return None
 
+
 def choose_card_to_play(num_cards):
     while True:
         try:
-            #card_index = 1
             card_index = int(input(f"Choose a card to play (1-{num_cards}): ")) - 1
             if 0 <= card_index < num_cards:
                 return card_index
@@ -38,7 +37,6 @@ def choose_card_to_play(num_cards):
                 print(f"Please enter a number between 1 and {num_cards}.")
         except ValueError:
             print("Invalid input. Please enter a valid number.")
-
 
 def handle_server_socket(socket):
     try:
@@ -52,27 +50,20 @@ def handle_server_socket(socket):
                 break
 
             if 'action_required' in parsed_response:
+                token = shm.read().decode()
+                print(token)
                 initial_command = parsed_response['action_required']
-                print(f"{initial_command}")
+                print(f"initial_command: {initial_command}")
+                
                 if initial_command == 'give_info':
+                    print("test before input")
+                    #sys.stdout.flush()
                     user_input = input("Give a tip to the other player? (y/n): ")
 
                     if user_input.lower() == 'y':
-                        try:
-                            while True:
-                                key = 128
-                                mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
-                                info_message = input("Enter the information you want to send: ")
-                                mq.send(info_message.encode(), type=1)
-
-                                message, _ = mq.receive(type=2)
-                                if message == "exit":
-                                    break
-                                if message == "again":
-                                    info_message = input("Enter the information you want to send: ")
-                                    mq.send(info_message.encode(), type=1)
-                        finally:
-                            mq.remove()
+                        info_thread = threading.Thread(target=info_thread_function)
+                        info_thread.start()
+                        #info_thread.join()
                         send_message(socket, {'action': 'give_info', 'consume': True})
 
                     elif user_input.lower() == 'n':
@@ -81,21 +72,9 @@ def handle_server_socket(socket):
                     else:
                         print("Invalid input. Please enter 'y' or 'n'.")
 
-                if initial_command == 'play_card':
-                    try:
-                        while True:
-                            key = 128
-                            mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
-                            message, _ = mq.receive(type=1)
-                            context = message.decode('utf-8')
-                            print(f"Received message: {context}")
-                            
-                            require = input("Enter 'again' for recommended info, enter 'exit' for end conversation: ")
-                            mq.send(require.encode(), type=2)
-                            if require == "exit":
-                                break
-                    finally:
-                        mq.remove()
+                elif initial_command == 'play_card':
+                    play_thread = threading.Thread(target=play_thread_function)
+                    play_thread.start()
 
                     print("Server is requesting action: play_card")
                     card_index = choose_card_to_play(5)
@@ -112,18 +91,51 @@ def handle_server_socket(socket):
     except Exception as e:
         print(f"Error handling server socket connection: {e}")
 
+def info_thread_function():
+    try:
+        while True:
+            key = 128
+            mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
+            #sys.stdout.flush()
+            info_message = input("Enter the information you want to send: ")
+            mq.send(info_message.encode(), type=1)
+
+            message, _ = mq.receive(type=2)
+            if message == "exit":
+                break
+            if message == "again":
+                #sys.stdout.flush()
+                info_message = input("Enter the information you want to send: ")
+                mq.send(info_message.encode(), type=1)
+    finally:
+        mq.remove()
+
+def play_thread_function():
+    try:
+        while True:
+            key = 128
+            mq = sysv_ipc.MessageQueue(key, sysv_ipc.IPC_CREAT)
+            message, _ = mq.receive(type=1)
+            context = message.decode('utf-8')
+            print(f"Received message: {context}")
+            #sys.stdout.flush()
+            require = input("Enter 'again' for recommended info, enter 'exit' for end conversation: ")
+            mq.send(require.encode(), type=2)
+            if require == "exit":
+                break
+    finally:
+        mq.remove()
+
 
 if __name__ == "__main__":
-    # Assuming you have the required imports and functions defined
-
-    # Set up socket connection
+    # Set socket connection
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.connect(('localhost', 12345))
 
+    shm = sysv_ipc.SharedMemory(888)
 
-    # Start processes
-    process_server_socket = Process(target=handle_server_socket, args=(server_socket, ))
+    # Start Game-Player connection
+    handle_server_socket(server_socket)
 
-    process_server_socket.start()
-
-    process_server_socket.join()
+    # Close socket connection
+    server_socket.close()
